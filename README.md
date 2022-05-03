@@ -17,3 +17,7 @@
 - claim
 - getTotalValueLocked
 - getUserValueLocked
+
+## Notation
+
+![notation](img/notation.JPG)
