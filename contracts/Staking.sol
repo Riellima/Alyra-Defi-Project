@@ -15,12 +15,12 @@ contract Staking {
   }
 
   uint256 constant public distributionPerSecond = 100; // 1/1000 % (100 = 0.1 %)
-  uint8 constant internal _tokenEthRatio = 2; // token price = 2x ETH price
+  int256 constant internal _tokenEthRatio = 2; // token price = 2x ETH price
 
   AggregatorV3Interface internal _ethUsdPriceFeed; 
   UniFiToken internal _unifiToken;  
   address[] public tokens;  
-  mapping(address => address => Stake[]) public tokenStakes; // token -> user -> stakes
+  mapping(address => mapping(address => Stake[])) public tokenStakes; // token -> user -> stakes
   
   /// Events
   
@@ -35,10 +35,23 @@ contract Staking {
     // Creates the token with 0 supply
     _unifiToken = new UniFiToken(0);
   }
+
+    // Returns ETH latest USD value
+  function getEthUsdValue() public view returns (int) {
+    (
+      /*uint80 roundID*/,
+      int price,
+      /*uint startedAt*/,
+      /*uint timeStamp*/,
+      /*uint80 answeredInRound*/
+    ) = _ethUsdPriceFeed.latestRoundData();
+    return price;
+  }
   
   /// Externals
 
-  function stake(address token_, uint256 amount_) external returns (uint256 stakeId) {
+  // stake an amount of token and returns the stake id
+  function stake(address token_, uint256 amount_) external returns (uint256) {
     require(amount_ > 0, "Cannot stake 0 amount");
     addToken(token_);
     tokenStakes[token_][msg.sender].push(Stake(amount_, block.timestamp, 0));
@@ -48,34 +61,23 @@ contract Staking {
   }
 
   function unstake(address token_, uint256 stakeId_) external {
-    require(tokenStakes[token_][msg.sender][stakeId_].balance > 0, "Stake not found");
+    require(tokenStakes[token_][msg.sender][stakeId_].amount > 0, "Stake not found");
     require(tokenStakes[token_][msg.sender][stakeId_].untilTimestamp == 0, 'Already unstaked');
+    // save how much we need to send
+    uint amount = tokenStakes[token_][msg.sender][stakeId_].amount;
     // reset balance now
-    tokenStakes[token_][msg.sender][stakeId_].balance = 0;
+    tokenStakes[token_][msg.sender][stakeId_].amount = 0;
     // send rewards to user
-    claim(token_, stakeId_);
+    this.claim(token_, stakeId_);
     // send unstaked token to user
-    IERC20(token_).transferFrom(address(this), msg.sender, amount_);
+    IERC20(token_).transferFrom(address(this), msg.sender, amount);
     // event
-    emit Unstaked(msg.sender, amount_);
-  }
-
-
-  // Returns ETH latest USD value
-  function getEthUsdValue() external view returns (int) {
-    (
-      /*uint80 roundID*/,
-      int price,
-      /*uint startedAt*/,
-      /*uint timeStamp*/,
-      /*uint80 answeredInRound*/
-    ) = _ethUsdPriceFeed.latestRoundData();
-      return price;
+    emit Unstaked(msg.sender, amount);
   }
 
   function claim(address token_, uint256 stakeId_) external {
     // how much rewards for the staked duration
-    uint256 rewardsForDuration = (block.timestamp - tokenStakes[token_][msg.sender][stakeId_].sinceTimestamp) * distributionPerSecond / 100
+    uint256 rewardsForDuration = (block.timestamp - tokenStakes[token_][msg.sender][stakeId_].sinceTimestamp) * distributionPerSecond / 100;
     // proportionnal to the user share of the protocol tvl
     uint256 rewardsAmount = rewardsForDuration * userShare(msg.sender, token_);
     // set new stake timestamp
@@ -87,40 +89,39 @@ contract Staking {
   }
 
   // token usd value
-  function getTokenUsdValue(address token_) external view returns (int usdValue) {
-    int ethUsd = getLatestPrice();
-    return _tokenEthRatio * ethUsd;
+  function getTokenUsdValue(address token_) external view returns (uint) {
+    return uint(_tokenEthRatio * this.getEthUsdValue());
   }
 
   // total contract token usd value
-  function getTotalUsdValueLocked() external view returns (uint totalUsdValueLocked) {
+  function getTotalUsdValueLocked() external view returns (uint) {
     uint256 sum = 0;
     for(uint i = 0; i < tokens.length; i++) {
-      sum += IERC20(tokens[i]).balanceOf(address(this)) * getTokenUsdValue(tokens[i]);
+      sum += IERC20(tokens[i]).balanceOf(address(this)) * this.getTokenUsdValue(tokens[i]);
     }
     return sum;
   }
 
   // user staked usd value for a specific token
-  function getUserTokenUsdValueLocked(address user_, address, token_) external view returns (uint userTokenUsdValueLocked) {
+  function getUserTokenUsdValueLocked(address user_, address token_) external view returns (uint) {
     uint256 sum = 0;
     for(uint j = 0; j < tokenStakes[token_][user_].length; j++) {
-      uint tokenBalance = tokenStakes[token_][user_][j].balance;
+      uint tokenBalance = tokenStakes[token_][user_][j].amount;
       if(tokenBalance > 0) {
-        sum += getTokenUsdValue(token_) * tokenBalance;
+        sum += this.getTokenUsdValue(token_) * tokenBalance;
       }        
     }
     return sum;
   }
 
   // user staked usd value for each of his token stake
-  function getUserUsdValueLocked(address user_) external view returns (uint userUsdValueLocked) {
+  function getUserUsdValueLocked(address user_) external view returns (uint) {
     uint256 sum = 0;
     for(uint i = 0; i < tokens.length; i++) {
       for(uint j = 0; j < tokenStakes[tokens[i]][user_].length; j++) {
-        uint tokenBalance = tokenStakes[tokens[i]][user_][j].balance;
+        uint tokenBalance = tokenStakes[tokens[i]][user_][j].amount;
         if(tokenBalance > 0) {
-          sum += getTokenUsdValue(tokens[i]) * tokenBalance;
+          sum += this.getTokenUsdValue(tokens[i]) * tokenBalance;
         }        
       }
     }
@@ -143,8 +144,10 @@ contract Staking {
   }
 
   // compute the user stake share of the protocol
-  function userShare(address user_, address token_) internal view returns (uint256 userShare) {
-    return getUserTokenStakeUsdValue(user_, token_) / getTotalUsdValueLocked() * 100;
+  function userShare(address user_, address token_) internal view returns (uint256) {
+    return this.getUserTokenUsdValueLocked(user_, token_) / this.getTotalUsdValueLocked() * 100;
   }
+
+
 
 }
