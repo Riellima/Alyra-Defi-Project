@@ -4,7 +4,7 @@ pragma solidity 0.8.13;
 
 import "../node_modules/@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 import "../node_modules/@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "./Token.sol";
+import "./UniFiToken.sol";
 
 contract Staking {
 
@@ -47,41 +47,59 @@ contract Staking {
     ) = _ethUsdPriceFeed.latestRoundData();
     return price;
   }
+
+  function getProtocolTokenAddress() public view returns (address) {
+    return address(_unifiToken);
+  }
   
   /// Externals
 
   // stake an amount of token and returns the stake id
   function stake(address token_, uint256 amount_) external returns (uint256) {
     require(amount_ > 0, "Cannot stake 0 amount");
+
     addToken(token_);
-    tokenStakes[token_][msg.sender].push(Stake(amount_, block.timestamp, 0));
+
+    Stake[] storage userTokenStakes = tokenStakes[token_][msg.sender];
+    userTokenStakes.push(Stake(amount_, block.timestamp, 0));
+
     ERC20(token_).transferFrom(msg.sender, address(this), amount_);
+
     emit Staked(msg.sender, amount_);
-    return tokenStakes[token_][msg.sender].length - 1;
+    return userTokenStakes.length - 1;
   }
 
   function unstake(address token_, uint256 stakeId_) external {
-    require(tokenStakes[token_][msg.sender][stakeId_].amount > 0, "Stake not found");
-    require(tokenStakes[token_][msg.sender][stakeId_].untilTimestamp == 0, 'Already unstaked');
+    Stake[] storage userTokenStakes = tokenStakes[token_][msg.sender];
+    require(userTokenStakes.length > stakeId_, "incorrect stake id");
     // save how much we need to send
-    uint amount = tokenStakes[token_][msg.sender][stakeId_].amount;
+    uint amount = userTokenStakes[stakeId_].amount;
+
+    require(amount > 0, "Stake not found");
+    require(userTokenStakes[stakeId_].untilTimestamp == 0, 'Already unstaked');
+    
     // reset balance now
-    tokenStakes[token_][msg.sender][stakeId_].amount = 0;
+    userTokenStakes[stakeId_].amount = 0;
     // send rewards to user
     this.claim(token_, stakeId_);
+    // allow token to be sent
+    ERC20(token_).approve(msg.sender, amount);
     // send unstaked token to user
-    IERC20(token_).transferFrom(address(this), msg.sender, amount);
+    ERC20(token_).transferFrom(address(this), msg.sender, amount);
     // event
     emit Unstaked(msg.sender, amount);
   }
 
   function claim(address token_, uint256 stakeId_) external {
+    Stake[] storage userTokenStakes = tokenStakes[token_][msg.sender];
+    require(userTokenStakes.length > stakeId_, "incorrect stake id");
+
     // how much rewards for the staked duration
-    uint256 rewardsForDuration = (block.timestamp - tokenStakes[token_][msg.sender][stakeId_].sinceTimestamp) * distributionPerSecond / 100;
+    uint256 rewardsForDuration = (block.timestamp - userTokenStakes[stakeId_].sinceTimestamp) * distributionPerSecond / 100;
     // proportionnal to the user share of the protocol tvl
     uint256 rewardsAmount = rewardsForDuration * userShare(msg.sender, token_);
     // set new stake timestamp
-    tokenStakes[token_][msg.sender][stakeId_].sinceTimestamp = block.timestamp;
+    userTokenStakes[stakeId_].sinceTimestamp = block.timestamp;
     // send protocol token to user
     _unifiToken.mintTo(msg.sender, rewardsAmount);
     // event
@@ -97,7 +115,7 @@ contract Staking {
   function getTotalUsdValueLocked() external view returns (uint) {
     uint256 sum = 0;
     for(uint i = 0; i < tokens.length; i++) {
-      sum += IERC20(tokens[i]).balanceOf(address(this)) * this.getTokenUsdValue(tokens[i]);
+      sum += ERC20(tokens[i]).balanceOf(address(this)) * this.getTokenUsdValue(tokens[i]);
     }
     return sum;
   }

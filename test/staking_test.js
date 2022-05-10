@@ -1,41 +1,103 @@
 const Staking = artifacts.require("./Staking.sol");
+const Oracle = artifacts.require("./AggregatorV3Mock.sol");
 const MyGreatToken = artifacts.require("./TestToken.sol");
+const ProtocolToken = artifacts.require("./UniFiToken.sol");
 
 const {
   BN,           // Big Number support
   constants,    // Common constants, like the zero address and largest integers
   expectEvent,  // Assertions for emitted events
   expectRevert, // Assertions for transactions that should fail
+  time,         // Time manipulations
 } = require('@openzeppelin/test-helpers');
 
 const { expect } = require('chai');
+
+const defaultAmount = new BN(1000);
+const zero = new BN(0);
 
 contract("Staking", function (accounts) {
   const user1 = accounts[1];
   const user2 = accounts[2];
 
   // stake
-  describe('stake', function () {
+  describe.skip('stake', function () {
+    let contractInstance;
+    let myTokenInstance;
+    let oracleMock;
+
+    before(async function () {
+      oracleMock = await Oracle.new();
+      contractInstance = await Staking.new(oracleMock.address);
+      myTokenInstance = await MyGreatToken.new(defaultAmount, { "from": user1 });
+      await myTokenInstance.approve(contractInstance.address, constants.MAX_UINT256, { from: user1 }); // unlimited approve
+    });
+
+    it('should stake token and return stake id', async function () {
+      let stakeId = await contractInstance.stake.call(myTokenInstance.address, defaultAmount, { from: user1 });
+      expect(stakeId.eq(zero)).to.be.equal(true, "stakeid should be 0");
+    });
+
+    it('should stake token and emit event', async function () {
+      let stakeReceipt = await contractInstance.stake(myTokenInstance.address, defaultAmount, { from: user1 });
+      expectEvent(stakeReceipt, "Staked", { sender: user1, amount: defaultAmount });
+    });
+  });
+
+  describe('claim', function () {
+    let stakeId;
+    let contractInstance;
+    let myTokenInstance;
+    let protocolToken;
+
+    before(async function () {
+      oracleMock = await Oracle.new(); // Create Oracle contract instance
+      contractInstance = await Staking.new(oracleMock.address); // Create Staking contract instance
+
+      let protocolTokenAddress = await contractInstance.getProtocolTokenAddress.call(); // Get protocol token address
+      protocolToken = ProtocolToken.at(protocolTokenAddress); // Fetch protocol token contract instance
+
+      myTokenInstance = await MyGreatToken.new(defaultAmount, { "from": user1 }); // Create a TestToken contract instance
+      await myTokenInstance.approve(contractInstance.address, constants.MAX_UINT256, { from: user1 }); // unlimited approve
+
+      stakeId = await contractInstance.stake.call(myTokenInstance.address, defaultAmount, { from: user1 }); // simulate stake to get stakeid
+      await contractInstance.stake(myTokenInstance.address, defaultAmount, { from: user1 }); // stake
+    });
+
+    it('should claim protocol tokens', async function () {
+      time.increase(1000); // Increase time by 1000 seconds
+      await contractInstance.claim(myTokenInstance.address, stakeId, { from: user1 });
+      let userProtocolTokenBalance = await protocolToken.balanceOf.call(user1);
+      console.log(userProtocolTokenBalance);
+    });
+
+    // it('should claim tokens and emit event', async function () {
+    //   time.increase(1000); // Increase time by 1000 seconds
+    //   let claimReceipt = await contractInstance.claim(myTokenInstance.address, stakeId, { from: user1 });
+    //   //expectEvent(unstakeReceipt, "Claimed", { sender: user1, amount: defaultAmount });
+    // });
+  });
+
+  describe.skip('unstake', function () {
+    let stakeId;
     let contractInstance;
     let myTokenInstance;
 
     before(async function () {
-      contractInstance = await Staking.new("0x8A753747A1Fa494EC906cE90E9f37563A8AF630e");
-      myTokenInstance = await MyGreatToken.new(0);
-      myTokenInstance.mintTo(user1, 100000);
+      oracleMock = await Oracle.new();
+      contractInstance = await Staking.new(oracleMock.address);
+      myTokenInstance = await MyGreatToken.new(defaultAmount, { "from": user1 });
+      await myTokenInstance.approve(contractInstance.address, constants.MAX_UINT256, { from: user1 }); // unlimited approve
+
+      stakeId = await contractInstance.stake.call(myTokenInstance.address, defaultAmount, { from: user1 }); // simulate stake to get stakeid
+      await contractInstance.stake(myTokenInstance.address, defaultAmount, { from: user1 }); // stake
     });
 
-    it('should stake token and return stake id', async function () {
-      const amount = new BN(1000);
-      console.log("approve contract to use an amount of testtoken from user1");
-      await myTokenInstance.approve(contractInstance.address, amount, { from: user1 });
-      console.log("stake an amount of testtoken");
-      let stakeReceipt = await contractInstance.stake(myTokenInstance.address, amount, { from: user1 });
-      console.log("expect event Staked");
-
-      expectEvent(stakeReceipt, "Staked", { sender: user1, amount: amount });
+    it('should unstake token and emit event', async function () {
+      let unstakeReceipt = await contractInstance.unstake(myTokenInstance.address, stakeId, { from: user1 });
+      expectEvent(unstakeReceipt, "Unstaked", { sender: user1, amount: defaultAmount });
     });
-  })
+  });
 
   // // getVoter
   // describe('getVoter', function () {
