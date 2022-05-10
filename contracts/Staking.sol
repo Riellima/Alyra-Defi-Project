@@ -3,7 +3,7 @@ pragma solidity 0.8.13;
 
 
 import "../node_modules/@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
-import "../node_modules/@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "../node_modules/@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "./Token.sol";
 
 contract Staking {
@@ -55,7 +55,7 @@ contract Staking {
     require(amount_ > 0, "Cannot stake 0 amount");
     addToken(token_);
     tokenStakes[token_][msg.sender].push(Stake(amount_, block.timestamp, 0));
-    IERC20(token_).transferFrom(msg.sender, address(this), amount_);
+    ERC20(token_).transferFrom(msg.sender, address(this), amount_);
     emit Staked(msg.sender, amount_);
     return tokenStakes[token_][msg.sender].length - 1;
   }
