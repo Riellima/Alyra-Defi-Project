@@ -9,163 +9,171 @@ import "./UniFiToken.sol";
 contract Staking {
 
   struct Stake {
+    address tokenAddress;
     uint256 amount;
     uint256 sinceTimestamp;
     uint256 untilTimestamp;
   }
 
-  uint256 constant public distributionPerSecond = 100; // 1/1000 % (100 = 0.1 %)
-  int256 constant internal _tokenEthRatio = 2; // token price = 2x ETH price
+  // example: with ETH/USD chainlink price feed, tokenA is ETH and tokenB is USD
+  struct PriceOracle {
+    address aggregatorAddress;
+    string tokenA;
+    string tokenB;
+  }
 
-  AggregatorV3Interface internal _ethUsdPriceFeed; 
+  uint256 constant public distributionPerSecond = 10;
+
   UniFiToken internal _unifiToken;  
-  address[] public tokens;  
-  mapping(address => mapping(address => Stake[])) public tokenStakes; // token -> user -> stakes
-  
+
+  // User address => Stake struct array
+  mapping(address => Stake[]) public tokenStakes; // user -> stakes
+
+  /// We need to add price oracles that all have the same tokenB (ETHUSD, LINKUSD...)
+
+  // the pair "ETHUSD" => PriceOracle struct
+  mapping(string => PriceOracle) public priceOracles;
+  // tokenA address => the pair "ETHUSD" for example
+  mapping(address => string) public priceOracleKeys;
+
   /// Events
   
-  event Staked(address sender, uint256 amount);
+  event Staked(address sender, uint256 amount, uint256 stakeId);
   event Unstaked(address sender, uint256 amount);
   event Claimed(address sender, uint256 amount);
 
   /// Constructor
 
   constructor(address ethUsdPriceFeedAddress_)  {
-    _ethUsdPriceFeed = AggregatorV3Interface(ethUsdPriceFeedAddress_);
+    priceOracles["ETHUSD"] = PriceOracle(ethUsdPriceFeedAddress_, "ETH", "USD");
+    priceOracleKeys[ethUsdPriceFeedAddress_] = "ETHUSD";
     // Creates the token with 0 supply
     _unifiToken = new UniFiToken(0);
   }
 
-    // Returns ETH latest USD value
-  function getEthUsdValue() public view returns (int) {
+  /// Public methods
+
+  // Return the current value of the user stake
+  function getStakeValue(address user_, uint256 stakeId_) public view returns (uint) {
+    Stake[] storage userTokenStakes = tokenStakes[user_];
+    require(userTokenStakes.length > stakeId_, "getStakeValue incorrect stake id");
+
+    Stake storage userTokenStake = userTokenStakes[stakeId_];
+    string storage pair = priceOracleKeys[userTokenStake.tokenAddress];
+    return userTokenStake.amount * this.getOraclePrice(pair);
+  }
+
+  // Returns the latest price of the chainlink oracle for a given pair
+  // If no oracle found, return ETHUSD price
+  function getOraclePrice(string memory pair_) public view returns (uint) {
+    //require(priceOracles[pair_].aggregatorAddress != address(0), "price oracle not found");
+    AggregatorV3Interface oracle;
+    if(priceOracles[pair_].aggregatorAddress == address(0)) {
+      oracle = AggregatorV3Interface(priceOracles["ETHUSD"].aggregatorAddress);
+    } else {
+      oracle = AggregatorV3Interface(priceOracles[pair_].aggregatorAddress);
+    }
     (
       /*uint80 roundID*/,
       int price,
       /*uint startedAt*/,
       /*uint timeStamp*/,
       /*uint80 answeredInRound*/
-    ) = _ethUsdPriceFeed.latestRoundData();
-    return price;
+    ) = oracle.latestRoundData();
+    return uint(price);
   }
 
-  function getProtocolTokenAddress() public view returns (address) {
-    return address(_unifiToken);
+  // Send claimable rewards of user_ for its Stake defined by stakeId_
+  // This function is only callable by the contract as we don't want anyone to 
+  // be able to claim rewards for someone else but still public so that we can 
+  // use it in claim and unstake functions 
+  function _claim(address user_, uint256 stakeId_) public {
+    require(msg.sender == address(this), "this method can only be called by the contract");
+    Stake[] storage userTokenStakes = tokenStakes[user_];
+    require(userTokenStakes.length > stakeId_, "_claim incorrect stake id");
+    require(userTokenStakes[stakeId_].untilTimestamp == 0, '_claim: Already unstaked');
+
+    uint256 rewardsAmount = this.getClaimable(user_, stakeId_);
+    // set new stake timestamp
+    userTokenStakes[stakeId_].sinceTimestamp = block.timestamp;
+    // send protocol token to user
+    _unifiToken.mintTo(user_, rewardsAmount);
+    // event
+    emit Claimed(user_, rewardsAmount);
   }
   
-  /// Externals
+  /// External calls
 
   // stake an amount of token and returns the stake id
   function stake(address token_, uint256 amount_) external returns (uint256) {
     require(amount_ > 0, "Cannot stake 0 amount");
 
-    addToken(token_);
+    Stake[] storage userTokenStakes = tokenStakes[msg.sender];
 
-    Stake[] storage userTokenStakes = tokenStakes[token_][msg.sender];
-    userTokenStakes.push(Stake(amount_, block.timestamp, 0));
+    userTokenStakes.push(Stake(token_, amount_, block.timestamp, 0));
 
     ERC20(token_).transferFrom(msg.sender, address(this), amount_);
 
-    emit Staked(msg.sender, amount_);
+    emit Staked(msg.sender, amount_, userTokenStakes.length - 1);
     return userTokenStakes.length - 1;
   }
 
-  function unstake(address token_, uint256 stakeId_) external {
-    Stake[] storage userTokenStakes = tokenStakes[token_][msg.sender];
-    require(userTokenStakes.length > stakeId_, "incorrect stake id");
+  // Claim sender rewards for a Stake
+  function claim(uint256 stakeId_) external {    
+    this._claim(msg.sender, stakeId_);
+  }
+
+  function unstake(uint256 stakeId_) external {
+    Stake[] storage userTokenStakes = tokenStakes[msg.sender];
+    require(userTokenStakes.length > stakeId_, "unstake: incorrect stake id");
     // save how much we need to send
     uint amount = userTokenStakes[stakeId_].amount;
 
     require(amount > 0, "Stake not found");
-    require(userTokenStakes[stakeId_].untilTimestamp == 0, 'Already unstaked');
+    require(userTokenStakes[stakeId_].untilTimestamp == 0, 'unstake: Already unstaked');
     
+    // send rewards to user
+    this._claim(msg.sender, stakeId_);
+    // set the timestamp user unstaked
+    userTokenStakes[stakeId_].untilTimestamp = block.timestamp;
     // reset balance now
     userTokenStakes[stakeId_].amount = 0;
-    // send rewards to user
-    this.claim(token_, stakeId_);
+    // get the token we want to unstake
+    address token = userTokenStakes[stakeId_].tokenAddress;
     // allow token to be sent
-    ERC20(token_).approve(msg.sender, amount);
+    ERC20(token).approve(msg.sender, amount);
     // send unstaked token to user
-    ERC20(token_).transferFrom(address(this), msg.sender, amount);
+    ERC20(token).transferFrom(address(this), msg.sender, amount);
     // event
     emit Unstaked(msg.sender, amount);
   }
 
-  function claim(address token_, uint256 stakeId_) external {
-    Stake[] storage userTokenStakes = tokenStakes[token_][msg.sender];
-    require(userTokenStakes.length > stakeId_, "incorrect stake id");
-
+  // get the amount of claimable protocol token
+  function getClaimable(address user_, uint256 stakeId_) public view returns(uint256) {
+    Stake[] storage userTokenStakes = tokenStakes[user_];
+    require(userTokenStakes.length > stakeId_, "getClaimable incorrect stake id");
+    require(userTokenStakes[stakeId_].untilTimestamp == 0, 'Already unstaked');
+    
     // how much rewards for the staked duration
-    uint256 rewardsForDuration = (block.timestamp - userTokenStakes[stakeId_].sinceTimestamp) * distributionPerSecond / 100;
-    // proportionnal to the user share of the protocol tvl
-    uint256 rewardsAmount = rewardsForDuration * userShare(msg.sender, token_);
-    // set new stake timestamp
-    userTokenStakes[stakeId_].sinceTimestamp = block.timestamp;
-    // send protocol token to user
-    _unifiToken.mintTo(msg.sender, rewardsAmount);
-    // event
-    emit Claimed(msg.sender, rewardsAmount);
+    uint256 rewardsForDuration = (block.timestamp - userTokenStakes[stakeId_].sinceTimestamp) * distributionPerSecond;
+    // proportionnal to stake value
+    return rewardsForDuration * this.getStakeValue(user_, stakeId_);
   }
 
-  // token usd value
-  function getTokenUsdValue(address token_) external view returns (uint) {
-    return uint(_tokenEthRatio * this.getEthUsdValue());
+  /// External views
+
+  // Return the protocol token address
+  function getProtocolTokenAddress() external view returns (address) {
+    return address(_unifiToken);
   }
 
-  // total contract token usd value
-  function getTotalUsdValueLocked() external view returns (uint) {
-    uint256 sum = 0;
-    for(uint i = 0; i < tokens.length; i++) {
-      sum += ERC20(tokens[i]).balanceOf(address(this)) * this.getTokenUsdValue(tokens[i]);
-    }
-    return sum;
+  // Return the array of Stake struct for a user
+  function getUserStakes(address user_) external view returns (Stake[] memory) {
+    return tokenStakes[user_];
   }
 
-  // user staked usd value for a specific token
-  function getUserTokenUsdValueLocked(address user_, address token_) external view returns (uint) {
-    uint256 sum = 0;
-    for(uint j = 0; j < tokenStakes[token_][user_].length; j++) {
-      uint tokenBalance = tokenStakes[token_][user_][j].amount;
-      if(tokenBalance > 0) {
-        sum += this.getTokenUsdValue(token_) * tokenBalance;
-      }        
-    }
-    return sum;
+  // Return the Stake struct for a user stakeId
+  function getUserStake(address user_, uint256 stakeId_) external view returns (Stake memory) {
+    return tokenStakes[user_][stakeId_];
   }
-
-  // user staked usd value for each of his token stake
-  function getUserUsdValueLocked(address user_) external view returns (uint) {
-    uint256 sum = 0;
-    for(uint i = 0; i < tokens.length; i++) {
-      for(uint j = 0; j < tokenStakes[tokens[i]][user_].length; j++) {
-        uint tokenBalance = tokenStakes[tokens[i]][user_][j].amount;
-        if(tokenBalance > 0) {
-          sum += this.getTokenUsdValue(tokens[i]) * tokenBalance;
-        }        
-      }
-    }
-    return sum;
-  }
-
-  /// Internals
-
-  // Add a managed token address to the internal list if not already existing
-  function addToken(address token_) internal {
-    bool add = true;
-    for(uint i = 0; i < tokens.length; i++) {
-      if(tokens[i] == token_) {
-        add = false;
-        break;
-      }        
-    }
-    if(add)
-      tokens.push(token_);
-  }
-
-  // compute the user stake share of the protocol
-  function userShare(address user_, address token_) internal view returns (uint256) {
-    return this.getUserTokenUsdValueLocked(user_, token_) / this.getTotalUsdValueLocked() * 100;
-  }
-
-
-
 }
