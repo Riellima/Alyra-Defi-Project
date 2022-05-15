@@ -176,4 +176,8 @@ contract Staking {
   function getUserStake(address user_, uint256 stakeId_) external view returns (Stake memory) {
     return tokenStakes[user_][stakeId_];
   }
+
+  function getUserBalance(address user_, address token_) external view returns (uint256) {
+    return ERC20(token_).balanceOf(user_);
+  }
 }
