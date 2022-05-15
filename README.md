@@ -13,3 +13,7 @@
 ## Notation
 
 ![notation](img/notation.JPG)
+
+## Links
+Demo video: https://www.loom.com/share/4a916012a3f84657b4026fb9580e2175
+
