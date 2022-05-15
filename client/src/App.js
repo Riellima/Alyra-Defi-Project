@@ -5,6 +5,7 @@ import Footer from "./components/Footer";
 import NavBar from "./components/NavBar";
 import Content from "./components/Content";
 
+
 import "./App.css";
 
 class App extends Component {
@@ -12,11 +13,6 @@ class App extends Component {
 
     componentDidMount = async () => {
         try {
-
-            /*let options = {
-                fromBlock: 0,
-                toBlock: 'latest'
-            };*/
 
             const web3 = await getWeb3();
             const accounts = await web3.eth.getAccounts();
@@ -26,28 +22,23 @@ class App extends Component {
                 Staking.abi, 
                 deployedNetwork && deployedNetwork.address,
             );
-
-            /*instance.events.Staked(options)
-            .on('data', event => console.log(event))
-            .on('changed', changed => console.log(changed))
-            .on('error', err => console.log(err))
-            .on('connected', str => console.log(str));*/
-
+        
             const protocolToken = await instance.methods.getProtocolTokenAddress().call();
 
             // Tokens available in the app (/!\ kovan addresses)
             const tokens = new Map([
                 ["UNF", protocolToken],
                 ["DAI", "0x4F96Fe3b7A6Cf9725f59d353F723c1bDb64CA6Aa"],
-                ["LINK", "0xa36085F69e2889c224210F603D836748e7dC0088"]
+                ["UNI", "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"]
             ]);
                 
             const tokensInv = new Map([
                 [protocolToken, "UNF"],
                 ["0x4F96Fe3b7A6Cf9725f59d353F723c1bDb64CA6Aa", "DAI"],
-                ["0xa36085F69e2889c224210F603D836748e7dC0088", "LINK"]
+                ["0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", "UNI"]
             ]);
             
+
             this.setState({ web3, accounts, contract: instance, tokens,tokensInv, protocolToken});
             this.runGetBalances();
             this.runGetStakes();
@@ -61,15 +52,10 @@ class App extends Component {
     };
 
     runStake = async (tokenName) => {
-
         const { accounts, contract, tokens} = this.state;
         const tokenAddress = tokens.get(tokenName);
-
-        console.log('runStake **** tokenAddress = ', tokenAddress, ' name = ', tokenName);
         const inputId = "stake-" + tokenName;
         const amount = document.getElementById(inputId);
-        console.log('amount = ', amount.value);
-
 
         await contract.methods.stake(tokenAddress, amount.value).send({ from: accounts[0] });
         amount.value = "";
@@ -121,7 +107,6 @@ class App extends Component {
     runGetStakes = async () => {
         const {contract, accounts} = this.state;
         const stakes = await contract.methods.getUserStakes(accounts[0]).call({ from: accounts[0] });
-        console.log("Stakes : ", stakes);
 
         this.setState({stakes});
     }
@@ -137,11 +122,39 @@ class App extends Component {
         this.setState({selectedPage: pageId});
     }
 
+    /*runHandleEvents = () => {
+        let options = {
+            filter: {value: []},
+            fromBlock: 'latest'
+        };
+        const {contract} = this.state;
+        let msg = "";
+
+        contract.events.Staked(options)
+        .on('data', event => {
+            msg = "Success: " + event.returnValues.amount + " staked";
+            alert(msg);
+        })
+        .on('error', err => console.log(err));
+
+        contract.events.Unstaked(options)
+        .on('data', event => {
+            msg = "Success: " + event.returnValues.amount + " unstaked";
+            alert(msg);
+        })
+        .on('error', err => console.log(err));
+
+        contract.events.Claimed(options)
+        .on('data', event => {
+            msg = "Success: You earn " + event.returnValues.amount + " tokens";
+            alert(msg);
+        })
+        .on('error', err => console.log(err));
+    }*/
 
     render() {
-        console.log("balances = ", this.state.balances);
         if (!this.state.web3) {
-        return <div>Loading Web3, accounts, and contract...</div>;
+            return <div>Loading Web3, accounts, and contract...</div>;
         }
 
         return (

@@ -37,6 +37,7 @@ export default class Content extends React.Component {
         //build rows for the table in "My stakes" tab
         let rowsUnstake = [];
         for (let i=0; i<stakes.length; i++){
+            if (stakes[i].amount !== "0"){
             rowsUnstake.push(
                 <tr class="bg-white rounded shadow-sm">
                     <td>{tokensInv.get(stakes[i].tokenAddress)}</td> 
@@ -48,7 +49,7 @@ export default class Content extends React.Component {
                         </div>
                     </td>
                 </tr>
-            )
+            )}
         }
 
         //Diplay page "Stake tokens"
