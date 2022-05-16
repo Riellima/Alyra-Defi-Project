@@ -16,13 +16,13 @@ export default class NavBar extends React.Component {
                 <nav class="navbar navbar-expand-sm navbar-dark bg-primary ">
                     <div class="navbar-collapse collapse justify-content-center" >
                         <ul class="navbar-nav">
-                            <li class="nav-item"><a class="nav-link active" href="/#" id="page-stake" onClick={()=>changePage("page-stake")}>Stake</a>
+                            <li class="nav-item"><button class="nav-link active" id="page-stake" onClick={()=>changePage("page-stake")}>Stake</button>
                             </li>
 
-                            <li><a class="nav-link" href="/#" id="page-my-stakes" onClick={()=>changePage("page-my-stakes")} >My stakes</a>
+                            <li><button class="nav-link" id="page-my-stakes" onClick={()=>changePage("page-my-stakes")} >My stakes</button>
                             </li>
 
-                            <li> <a class="nav-link" href="/#" id="page-about" onClick={()=>changePage("page-about")} >About</a>
+                            <li> <button class="nav-link" id="page-about" onClick={()=>changePage("page-about")} >About</button>
                             </li>
                         </ul>
                     </div>
@@ -30,6 +30,4 @@ export default class NavBar extends React.Component {
             </div>
         )
     }
-
 }
-
